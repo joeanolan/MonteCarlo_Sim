@@ -1,0 +1,229 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Wed Apr 15 10:07:44 2020
+
+@author: NolanJosephA(UMKC-St
+"""
+
+from numpy import genfromtxt
+import numpy as np
+import matplotlib.pyplot as plt
+from tqdm import tqdm
+import math
+from mpl_toolkits.mplot3d import Axes3D
+
+wind_data = genfromtxt('Wind_DataFile.csv', delimiter=',')
+# Column 1 = altitude
+# Column 2 = wind Vx
+# Column 3 = wind Vy
+
+DegtoRad = 3.14/180 # Convert degrees to radians
+
+# Parachute/Payload Parameters #
+Sdrogue = 0.3 # Drogue parachute reference area, m^2
+Smain = 2.0 # Main parachute reference area, m^2
+Cd = 0.7 # Parachute drag coefficient
+Mp = 0.5 # Mass of parachute, kg
+Ms = 5.0 # Payload mass, kg
+Mt = Ms + Mp # Total mass, kg
+# ---------------------------- #
+
+# Simulation Parameters #
+z_transition = (5000,4000,3000,2000,1750) # Drogue to main transition altitude
+start_alt = 7000.0 # Starting altitude (Z) location
+start_x = 0.0 # Starting X location 
+start_y = 0.0 # Starting Y location
+runin_angle = 45*DegtoRad # Heading of aircraft when payload is released
+runin_speed = 75 # Speed of aircraft [m/s] when payload is released
+end_alt = 1500.0 # Ground altitude
+dt = 0.05 # Simulation time step, s (if too large simulation goes unstable)
+# --------------------- #
+
+
+# Monte Carlo Parameters #
+x_dist_des = 9425 # Desired downrange mean (for quantifying good/bad)
+x_delta = 100
+y_dist_des = 8675
+y_delta = 100  # Range +/- from desired downrange that is allowable (good)
+num_sims = 5 # Number of simulations for EACH input configuration
+Vx_std = 1.0 # Set standard deviation for wind x-vel
+Cd_std = 0.1 # Drag coefficient standard deviation
+S_std = 0.005 # Area standard deviation
+Ms_std = 0.05 # Mass standard deviation
+Mp_std = 0.1
+runin_angle_std = 5
+runin_speed_std = 4
+Sdrogue_std = .01
+Smain_std = .1
+#v_search = [80, 100, 400] # Paired initial velocity and angle that on average
+#angle_search = [60*DegtoRad, 40*DegtoRad, 7*DegtoRad] # are close to 500m
+#v_search = np.linspace(25,350,10) # Muzzle velocities to search
+#angle_search = np.linspace(5,80,10)*DegtoRad # Launch angles to search
+
+
+
+def z_sim(z_init, z_end, dt, Sd, Sm, Cd, M, z_trans):
+    g = 9.81 # SI units
+    z = np.ones(1) # Initializing altitude array, will append as sim runs
+    zd = np.ones(1) # Init. z dot array
+    zdd = np.ones(1) # Init. z double dot array
+    t = np.ones(1) # Initializing time array, will append as sim runs
+    t[0] = 0
+    z[0] = z_init # Start sim at release altitude
+    zd[0] = -0.001 # Starting with 0 descent velocity (may have forward velocity though)
+    zdd[0] = 0 # 0 descent acceleration for first time step
+	
+    i = 0
+    while (z[i] > z_end): # Looping until altitude is below the ground
+        i = i + 1
+        if (z[i-1]>z_trans): # If still above transition altitude
+            S = Sd # use drogue parachute size
+        else:
+            S = Sm # otherwise, use main parachute size
+            
+        zdd = np.append(zdd, -M*g - np.sign(zd[i-1])*0.5*rho(z[i-1])*Cd*S*zd[i-1]**2)
+        # z accel is weight and drag only (no other external force/propulsion)
+        
+        zd = np.append(zd, zd[i-1] + zdd[i]*dt)
+        # z velocity is simple kinematic integration, vel = vel_prev + accel*dt
+        
+        z = np.append(z, z[i-1] + zd[i]*dt + 0.5*zdd[i]*dt**2)
+        # altitude is simple kinematic integration
+        
+        t = np.append(t, t[i-1] + dt) # Simple, but sticking in here for convenience
+    return z, zd, zdd, t
+
+
+def x_y_sim(z, t, dt, x0, y0, Vx0, Vy0, Cd, Sd, Sm, M, z_trans, wind):
+    x = np.ones(1) # Init X position array
+    xd = np.ones(1) # Init X velocity array
+    xdd = np.ones(1) # Init X acceleration array
+    y = np.ones(1) # Init Y position array
+    yd = np.ones(1) # Init Y velocity array
+    ydd = np.ones(1) # Init Y acceleration array
+    
+    # Setting initial conditions
+    x[0] = x0 # Initial position from aircraft deployment (0,0 is "perfect")
+    xd[0] = Vx0 # Initial velocity from aircraft deployment
+    xdd[0] = 0 
+    y[0] = y0 # Initial position from aircraft deployment (0,0 is "perfect")
+    yd[0] = Vy0 # Initial velocity from aircraft deployment
+    ydd[0] = 0
+    
+    
+    wind_interp_x = np.ones(len(z)) # Init wind interpolation (need wind at z(k) altitude, not altitudes given in file)
+    wind_interp_x[0] = 0.0
+    wind_interp_y = np.ones(len(z))
+    wind_interp_y[0] = 0.0
+    
+    for i in range(1,len(z)):
+        if (z[i-1]>z_trans): # If still above transition altitude
+            S = Sd # use drogue parachute size
+        else:
+            S = Sm # otherwise, use main parachute size
+    
+    for i in range(1,len(z)):
+        wind_interp_x[i] = np.interp(z[i-1], wind[:,0], wind[:,1])+np.random.normal(2,1)  # Does not have any randomness added to interpolation
+        wind_interp_y[i] = np.interp(z[i-1], wind[:,0], wind[:,2])+np.random.normal(2,1)
+        # this linear interpolation uses the wind data (from file) and the previous altitude (z[i-1]) to estimate what the wind is at z[i-1]
+        
+        xdd = np.append(xdd, -np.sign(xd[i-1])*0.5*rho(z[i-1])*Cd*S*xd[i-1]**2)
+        ydd = np.append(ydd, -np.sign(yd[i-1])*0.5*rho(z[i-1])*Cd*S*yd[i-1]**2)
+        # Acceleration is equal to -1/2*rho*cd*S*v^2 (drag), no external force/propulsion
+        
+        xd = np.append(xd, xd[i-1] + xdd[i]*dt + wind_interp_x[i])
+        yd = np.append(yd, yd[i-1] + ydd[i]*dt + wind_interp_y[i])
+        # velocity is simply kinematic integration. Xd = Xd_prev + Accel*dt + wind velocity (assuming projectile is moved by wind velocity for each time step)
+        
+        x = np.append(x, x[i-1] + xd[i-1]*dt + 0.5*xdd[i-1]*dt**2)
+        y = np.append(y, y[i-1] + yd[i-1]*dt + 0.5*ydd[i-1]*dt**2)
+        # position is simply kinematic integration 
+    return x, xd, xdd, y, yd, ydd
+	
+	
+def rho(alt):
+    C1 = -3.9142e-14
+    C2 = 3.6272e-9
+    C3 = -1.1357e-4
+    C4 = 1.2204
+    rho_poly = C1*alt**3 + C2*alt**2 + C3*alt + C4
+    return rho_poly
+
+
+
+####################################
+##### Main Simulation/Program ######
+####################################
+
+####   MONTE CARLO Simulation  #####
+
+end_x = np.ones(num_sims) # Stores all landing x-distances
+end_y = np.ones(num_sims)
+end_within_bnds = np.zeros(num_sims) # Stores number of sims that meet bound criteria
+
+Cd_all = np.ones(num_sims) # Stores drag coeffs used for each sim
+S_all = np.ones(num_sims) # Stores wetted area for each sim
+M_all = np.ones(num_sims) # Stores mass for each sim
+Sdrogue_all = np.ones(num_sims) #stores all drogue areas for each sim
+Smain_all = np.ones(num_sims)
+Ms_all = np.ones(num_sims)
+Mp_all = np.ones(num_sims)
+runin_angle_all = np.ones(num_sims)
+runin_speed_all = np.ones(num_sims)
+x_all = np.ones((num_sims,len(z_transition)))
+y_all = np.ones((num_sims,len(z_transition)))
+z_all = np.ones((num_sims,len(z_transition)))
+end_x_mean = []  #np.ones((num_sims,len(z_transition)))
+end_x_std = [] #np.ones((num_sims,len(z_transition)))
+end_y_mean = [] #np.ones((num_sims,len(z_transition)))
+end_y_std = [] #np.ones((num_sims,len(z_transition)))
+end_within_xbnds = np.ones((num_sims,len(z_transition)))
+end_within_ybnds = np.ones((num_sims,len(z_transition)))
+
+#wind_noise = wind_data+np.random.normal(2,0.1)
+
+#print(wind_noise)
+# Simulating with different simulation parameters (Cd, S, etc.)
+for i,alt in enumerate(tqdm(z_transition)):
+    for k in range(0,num_sims): # tqdm just gives a progress bar, helpful when running very long simulations
+        # Creating sim parameters for Monte Carlo run
+        Cd_sim = np.random.normal(Cd,Cd_std) # Getting next Cd based upon Cd + reasonable variation
+        Cd_all[k] = Cd_sim # Storing Cd so we can review later (if needed)
+        runin_angle_sim = np.random.normal(runin_angle,runin_angle_std)
+        runin_angle_all[k] = runin_angle_sim
+        runin_speed_sim = np.random.normal(runin_speed,runin_speed_std)
+        runin_speed_all[k] = runin_speed_sim
+        Vx_init = runin_speed_sim*math.cos(runin_angle_sim) # Take runin angle and speed and convert to x and y initial speeds
+        Vy_init = runin_speed_sim*math.sin(runin_angle_sim)
+        z,zd, zdd, t = z_sim(start_alt, end_alt, dt ,Sdrogue, Smain, Cd_sim, Mt, z_transition[i]) # Run z (altitude) simulation
+        x, xd, xdd, y, yd, ydd = x_y_sim(z, t, dt, start_x, start_y, Vx_init, Vy_init, Cd_sim, Sdrogue, Smain, Mt, z_transition[i], wind_data) # Run x (downrange) simulation
+        x_all[k,i] = x[len(x)-1]
+        y_all[k,i] = y[len(y)-1]
+        z_all[k,i] = z[len(z)-1]
+    end_x_mean.append(np.average(x_all[i])) # Compute average for all sims with v[i] and angle[j] initial conditions
+    end_x_std.append(np.std(x_all[i])) # Compute standard deviation for all sims with v[i] and angle[j] iniital conditions
+    end_y_mean.append(np.average(y_all[i]))
+    end_y_std.append(np.std(y_all[i]))
+    ind_within_xbnds = np.where(np.logical_and(x_all[i]>=x_dist_des-x_delta, x_all[i]<=x_dist_des+x_delta)) # Gets all indices that are within bounds
+    end_within_xbnds[i] = len(ind_within_xbnds[0]) # Counts number of indices that are within bounds (gives percentage of sims that met criteria)
+    ind_within_ybnds = np.where(np.logical_and(y_all[i]>=y_dist_des-y_delta, y_all[i]<=y_dist_des+y_delta)) # Gets all indices that are within bounds
+    end_within_ybnds[i] = len(ind_within_ybnds[0])
+    #print "X stats = Mean Range: {0:1.1}".format(end_x_mean[:,i]), ", StD Range: {0:1.1}".format(end_x_std[:,i]), ", Perc Good: {0:1.1}%".format(end_within_xbnds[i]*100/num_sims)
+    #print "Y stats = Mean Range: {0:1.1}".format(end_y_mean[:,i]), ", StD Range: {0:1.1}".format(end_y_std[:,i]), ", Perc Good: {0:1.1}%".format(end_within_ybnds[i]*100/num_sims)
+
+fig = plt.figure(1)
+#for i in x_all:
+plt.plot(x_all,y_all,'.')
+plt.xlabel('X Distance, m')
+plt.ylabel('Y Distance, m')
+plt.legend({'5000m','4000m','3000m','2000m','1750m'})
+plt.show()
+
+#print(x_all)
+print("-----X stats-----")
+for i,xmean in enumerate(end_x_mean):
+    print('Altitude:{}m'.format(z_transition[i]),'Mean X distance {:.3f}m'.format(end_x_mean[i]),'STD X distance {:.3f}m'.format(end_x_std[i]))
+
+print("-----Y stats-----")
+for i,ymean in enumerate(end_y_mean):
+    print('Altitude:{}m'.format(z_transition[i]),'Mean Y distance {:.3f}m'.format(end_y_mean[i]),'STD Y distance {:.3f}m'.format(end_y_std[i]))
