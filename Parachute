@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 import math
 from mpl_toolkits.mplot3d import Axes3D
+from scipy.stats import chi2
 
 wind_data = genfromtxt('Wind_DataFile.csv', delimiter=',')
 # Column 1 = altitude
@@ -45,7 +46,7 @@ x_dist_des = 9425 # Desired downrange mean (for quantifying good/bad)
 x_delta = 100
 y_dist_des = 8675
 y_delta = 100  # Range +/- from desired downrange that is allowable (good)
-num_sims = 5 # Number of simulations for EACH input configuration
+num_sims = 100 # Number of simulations for EACH input configuration
 Vx_std = 1.0 # Set standard deviation for wind x-vel
 Cd_std = 0.1 # Drag coefficient standard deviation
 S_std = 0.005 # Area standard deviation
@@ -55,6 +56,9 @@ runin_angle_std = 5
 runin_speed_std = 4
 Sdrogue_std = .01
 Smain_std = .1
+wind_k = 2
+wind_std = .1
+wind_pdf = chi2(wind_k, wind_std) # Setup Chi-Squared distribution
 #v_search = [80, 100, 400] # Paired initial velocity and angle that on average
 #angle_search = [60*DegtoRad, 40*DegtoRad, 7*DegtoRad] # are close to 500m
 #v_search = np.linspace(25,350,10) # Muzzle velocities to search
@@ -123,8 +127,8 @@ def x_y_sim(z, t, dt, x0, y0, Vx0, Vy0, Cd, Sd, Sm, M, z_trans, wind):
             S = Sm # otherwise, use main parachute size
     
     for i in range(1,len(z)):
-        wind_interp_x[i] = np.interp(z[i-1], wind[:,0], wind[:,1])+np.random.normal(2,1)  # Does not have any randomness added to interpolation
-        wind_interp_y[i] = np.interp(z[i-1], wind[:,0], wind[:,2])+np.random.normal(2,1)
+        wind_interp_x[i] = np.interp(z[i-1], wind[:,0], wind[:,1]) + wind_pdf.rvs() # Does not have any randomness added to interpolation
+        wind_interp_y[i] = np.interp(z[i-1], wind[:,0], wind[:,2]) + wind_pdf.rvs()
         # this linear interpolation uses the wind data (from file) and the previous altitude (z[i-1]) to estimate what the wind is at z[i-1]
         
         xdd = np.append(xdd, -np.sign(xd[i-1])*0.5*rho(z[i-1])*Cd*S*xd[i-1]**2)
@@ -180,9 +184,12 @@ end_y_std = [] #np.ones((num_sims,len(z_transition)))
 end_within_xbnds = np.ones((num_sims,len(z_transition)))
 end_within_ybnds = np.ones((num_sims,len(z_transition)))
 
-#wind_noise = wind_data+np.random.normal(2,0.1)
+#wind_noise = np.zeros( ((len(wind_data)),(len(wind_data[0]))) )
 
-#print(wind_noise)
+#chi2_param = sp.stats.chi2.fit(wind_data)
+#for i in range(len(wind_noise)):
+# wind_noise[i,0] = sp.stats.chi2.pdf(wind_data[:,1], chi2_param[0], chi2_param[1])
+#print wind_noise
 # Simulating with different simulation parameters (Cd, S, etc.)
 for i,alt in enumerate(tqdm(z_transition)):
     for k in range(0,num_sims): # tqdm just gives a progress bar, helpful when running very long simulations
