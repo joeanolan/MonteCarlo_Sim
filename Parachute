@@ -10,7 +10,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 import math
-from mpl_toolkits.mplot3d import Axes3D
+#from mpl_toolkits.mplot3d import Axes3D
 from scipy.stats import chi2
 
 wind_data = genfromtxt('Wind_DataFile.csv', delimiter=',')
@@ -42,11 +42,11 @@ dt = 0.05 # Simulation time step, s (if too large simulation goes unstable)
 
 
 # Monte Carlo Parameters #
-x_dist_des = 9425 # Desired downrange mean (for quantifying good/bad)
+x_dist_des = 25042 # Desired downrange mean (for quantifying good/bad)
 x_delta = 100
-y_dist_des = 8675
+y_dist_des = 22835
 y_delta = 100  # Range +/- from desired downrange that is allowable (good)
-num_sims = 100 # Number of simulations for EACH input configuration
+num_sims = 10 # Number of simulations for EACH input configuration
 Vx_std = 1.0 # Set standard deviation for wind x-vel
 Cd_std = 0.1 # Drag coefficient standard deviation
 S_std = 0.005 # Area standard deviation
@@ -85,7 +85,7 @@ def z_sim(z_init, z_end, dt, Sd, Sm, Cd, M, z_trans):
         else:
             S = Sm # otherwise, use main parachute size
             
-        zdd = np.append(zdd, -M*g - np.sign(zd[i-1])*0.5*rho(z[i-1])*Cd*S*zd[i-1]**2)
+        zdd = np.append(zdd, -g - np.sign(zd[i-1])*0.5/M*rho(z[i-1])*Cd*S*zd[i-1]**2)
         # z accel is weight and drag only (no other external force/propulsion)
         
         zd = np.append(zd, zd[i-1] + zdd[i]*dt)
@@ -114,6 +114,7 @@ def x_y_sim(z, t, dt, x0, y0, Vx0, Vy0, Cd, Sd, Sm, M, z_trans, wind):
     yd[0] = Vy0 # Initial velocity from aircraft deployment
     ydd[0] = 0
     
+
     
     wind_interp_x = np.ones(len(z)) # Init wind interpolation (need wind at z(k) altitude, not altitudes given in file)
     wind_interp_x[0] = 0.0
@@ -127,12 +128,12 @@ def x_y_sim(z, t, dt, x0, y0, Vx0, Vy0, Cd, Sd, Sm, M, z_trans, wind):
             S = Sm # otherwise, use main parachute size
     
     for i in range(1,len(z)):
-        wind_interp_x[i] = np.interp(z[i-1], wind[:,0], wind[:,1]) + wind_pdf.rvs() # Does not have any randomness added to interpolation
-        wind_interp_y[i] = np.interp(z[i-1], wind[:,0], wind[:,2]) + wind_pdf.rvs()
+        wind_interp_x[i] = np.interp(z[i-1], wind[:,0], wind[:,1])+ wind_pdf.rvs()  # Does not have any randomness added to interpolation
+        wind_interp_y[i] = np.interp(z[i-1], wind[:,0], wind[:,2])+ wind_pdf.rvs() 
         # this linear interpolation uses the wind data (from file) and the previous altitude (z[i-1]) to estimate what the wind is at z[i-1]
         
-        xdd = np.append(xdd, -np.sign(xd[i-1])*0.5*rho(z[i-1])*Cd*S*xd[i-1]**2)
-        ydd = np.append(ydd, -np.sign(yd[i-1])*0.5*rho(z[i-1])*Cd*S*yd[i-1]**2)
+        xdd = np.append(xdd, -np.sign(xd[i-1])*0.5*rho(z[i-1])*Cd*S/M*xd[i-1]**2)
+        ydd = np.append(ydd, -np.sign(yd[i-1])*0.5*rho(z[i-1])*Cd*S/M*yd[i-1]**2)
         # Acceleration is equal to -1/2*rho*cd*S*v^2 (drag), no external force/propulsion
         
         xd = np.append(xd, xd[i-1] + xdd[i]*dt + wind_interp_x[i])
@@ -152,7 +153,6 @@ def rho(alt):
     C4 = 1.2204
     rho_poly = C1*alt**3 + C2*alt**2 + C3*alt + C4
     return rho_poly
-
 
 
 ####################################
@@ -194,7 +194,7 @@ end_within_ybnds = np.ones((num_sims,len(z_transition)))
 for i,alt in enumerate(tqdm(z_transition)):
     for k in range(0,num_sims): # tqdm just gives a progress bar, helpful when running very long simulations
         # Creating sim parameters for Monte Carlo run
-        Cd_sim = np.random.normal(Cd,Cd_std) # Getting next Cd based upon Cd + reasonable variation
+        Cd_sim = Cd+ np.random.normal(0,Cd_std)# Getting next Cd based upon Cd + reasonable variation
         Cd_all[k] = Cd_sim # Storing Cd so we can review later (if needed)
         runin_angle_sim = np.random.normal(runin_angle,runin_angle_std)
         runin_angle_all[k] = runin_angle_sim
